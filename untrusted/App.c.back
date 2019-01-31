@@ -1,0 +1,191 @@
+/* App.c
+*
+* Copyright (C) 2006-2016 wolfSSL Inc.
+*
+* This file is part of wolfSSL.
+*
+* wolfSSL is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* wolfSSL is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+*/
+
+
+#include "stdafx.h"
+#include "App.h" /* contains include of Enclave_u.h which has wolfSSL header files */
+#include "logging.h"
+
+/* Use Debug SGX ? */
+#if _DEBUG
+	#define DEBUG_VALUE SGX_DEBUG_FLAG
+#else
+	#define DEBUG_VALUE 1
+#endif
+
+/* the usual suspects */
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
+
+/* socket includes */
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <unistd.h>
+
+#include <sgx_uae_service.h>
+#include <sgx_ukey_exchange.h>
+
+#include <libdill.h>
+
+#include <wolfssl/certs_test.h>
+
+#include "utils.h"
+
+coroutine void raft_conn_new(sgx_enclave_id_t eid, int s, WOLFSSL_CTX* ctx) {
+
+  int sgx_status;
+  raft_conn_t* raft_conn;
+  Debug("co, begin ecall\n");
+  sgx_status = ecall_raft_conn_new(eid, &raft_conn, s, ctx);
+  unsigned char* buf_recv = malloc(sizeof(unsigned char));
+  unsigned char* buf_send = malloc(2048*sizeof(unsigned char));
+  memset(buf_send, '\0', 2048);
+  int len_to_flush;
+  while(1){
+    int ret =  brecv(s, buf_recv, 1, -1);
+    if(ret < 0){
+      Debug("brecv error: %d",errno);
+      break;
+    }
+    printf("try flush buf_tcp_send\n");
+    sgx_status = ecall_feed_tcp_recv(eid, &len_to_flush, raft_conn, buf_recv, 1);
+    if(sgx_status !=0){
+      Debug("ecall_feed_tcp_recv failed\n");
+    }
+    while(real_len > 0){
+      printf("need to flush more bytes:%d\n", real_len);
+      sgx_status = ecall_pull_tcp_send(eid, &ret, raft_conn, buf_send, len_to_flush);
+      if(sgx_status !=0){
+        Debug("ecall_pull_tcp_send failed\n");
+      }
+      int rc = bsend(s, buf_send, real_len, -1);
+      if(rc<=0){
+        Debug("bsend %d bytes ret: %d %d\n", len_to_flush, rc, errno);
+        break;
+      }
+      len_to_flush = ret;
+    }
+  }
+  Debug("close connection\n");
+  Debug("exit coroutine\n");
+}
+
+int main(int argc, char* argv[]) /* not using since just testing w/ wc_test */
+{
+  sgx_enclave_id_t id;
+  sgx_launch_token_t t;
+
+  int ret = 0;
+  int sgx_status = 0;
+  int updated = 0;
+
+  memset(t, 0, sizeof(sgx_launch_token_t));
+
+  sgx_status = sgx_create_enclave(ENCLAVE_FILENAME, DEBUG_VALUE, &t, &updated, &id, NULL);
+  if (sgx_status != SGX_SUCCESS) {
+    Error("Failed to create Enclave : error %d - %#x.\n", ret, ret);
+    return 1;
+  }
+
+  //  cache_verify_buffer(id);
+  WOLFSSL_CTX* ctx;
+  sgx_status = ecall_setup_wolfssl_ctx(id, &ctx);
+
+  /* Load server certificates into WOLFSSL_CTX */
+  int sgxStatus;
+  sgxStatus = enc_wolfSSL_CTX_use_certificate_buffer(id, &ret, ctx,
+                                                     server_cert_der_2048, sizeof_server_cert_der_2048, SSL_FILETYPE_ASN1);
+  if (sgxStatus != SGX_SUCCESS || ret != SSL_SUCCESS) {
+    printf("enc_wolfSSL_CTX_use_certificate_chain_buffer_format failure\n");
+    return EXIT_FAILURE;
+  }
+
+  /* Load server key into WOLFSSL_CTX */
+  sgxStatus = enc_wolfSSL_CTX_use_PrivateKey_buffer(id, &ret, ctx,
+                                                    server_key_der_2048, sizeof_server_key_der_2048, SSL_FILETYPE_ASN1);
+  if (sgxStatus != SGX_SUCCESS || ret != SSL_SUCCESS) {
+    printf("wolfSSL_CTX_use_PrivateKey_buffer failure\n");
+    return EXIT_FAILURE;
+  }
+
+  int port = 5555;
+  if(argc > 1) port = atoi(argv[1]);
+  struct ipaddr addr;
+  int rc = ipaddr_local(&addr, NULL, port, 0);
+  if (rc < 0) {
+    perror("Can't open listening socket");
+    return 1;
+
+  }
+  int ls = tcp_listen(&addr, -1);
+  assert( ls >= 0 );
+
+  while(1) {
+    struct ipaddr c_addr;
+
+    int s = tcp_accept(ls, &c_addr, -1);
+    // assume s is a connected socket
+
+    char buf[IPADDR_MAXSTRLEN];
+    ipaddr_str(&c_addr, buf);
+    int port = ipaddr_port(&c_addr);
+    Debug("Peer IP address: %s:%d\n", buf, port);
+    assert(s >= 0);
+    //    s = suffix_attach(s, "\r\n", 2);
+    //    assert(s >= 0);
+    int rc = go(raft_conn_new(id, s, ctx));
+    assert(rc >= 0);
+  }
+  return 0;
+}
+
+void ocall_print_string(const char *str)
+{
+    /* Proxy/Bridge will check the length and null-terminate 
+     * the input string to prevent buffer overflow. 
+     */
+  Ocall_printf("%s", str);
+}
+
+
+int ocall_brecv(int s, unsigned char* buf, size_t len, int deadline){
+  Debug("socket %d recv is waiting\n", s);
+  int ret =  brecv(s, buf, len, deadline);
+  Debug("socket %d recv is done, ret:%d, errno:%d\n", s, ret, errno);
+  return 1;
+}
+int ocall_bsend(int s, const unsigned char* buf, size_t len, int deadline){
+  return bsend(s, buf, len, deadline);
+}
+time_t ocall_time(time_t* timer){
+  return time(timer);
+}
+void ocall_low_res_time(int* time)
+{
+    struct timeval tv;
+    gettimeofday (&tv, NULL);
+    if(!time) return;
+    *time = tv.tv_sec;
+    return;
+}
