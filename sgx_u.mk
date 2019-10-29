@@ -58,6 +58,9 @@ OPENSSL_LDFLAGS = -L/opt/openssl/1.1.1/lib -lssl -lcrypto
 Libdill_cflags = -I/usr/local/include
 Libdill_ldflags = -L/usr/local/lib -ldill
 
+Libmill_cflags = -I/usr/local/include
+Libmill_ldflags = -L/usr/local/lib -lmill
+
 # CFLAGS and LIBS are all about wolfssl library
 # option variables
 
@@ -68,7 +71,7 @@ CFLAGS+=-pthread
 
 App_C_Files := $(UNTRUSTED_DIR)/App.c $(UNTRUSTED_DIR)/http_parser.c
 App_Include_Paths := -IInclude $(Wolfssl_Include_Paths) -I$(UNTRUSTED_DIR) -I$(SGX_SDK)/include ${CFLAGS} ${OPENSSL_CFLAGS}
-App_C_Flags := $(SGX_COMMON_CFLAGS) -fPIC -Wno-attributes $(App_Include_Paths) $(Wolfssl_C_Extra_Flags) $(Libdill_cflags)
+App_C_Flags := $(SGX_COMMON_CFLAGS) -fPIC -Wno-attributes $(App_Include_Paths) $(Wolfssl_C_Extra_Flags) $(Libdill_cflags) ${Libmill_cflags}
 
 
 # Three configuration modes - Debug, prerelease, release
@@ -96,7 +99,7 @@ endif
 override undefine NO_FILESYSTEM
 override undefine NO_CERTS
 
-App_Link_Flags := $(SGX_COMMON_CFLAGS) -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -lpthread ${OPENSSL_LDFLAGS} $(Wolfssl_libs) $(Libdill_ldflags)
+App_Link_Flags := $(SGX_COMMON_CFLAGS) -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -lpthread ${OPENSSL_LDFLAGS} $(Wolfssl_libs) $(Libdill_ldflags) ${Libmill_ldflags}
 
 ifneq ($(SGX_MODE), HW)
 	App_Link_Flags += -lsgx_uae_service_sim

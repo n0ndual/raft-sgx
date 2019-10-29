@@ -24,13 +24,17 @@ enclave {
 							  long sz,
 							  int type);
         public WOLFSSL_CTX* ecall_setup_wolfssl_ctx(void);
-        public void* ecall_raft_peer_new([user_check] WOLFSSL_CTX* ctx,
-                                                [in, size=sz]char* ip, int sz,
-                                                int socket, int is_client);
-        public int ecall_feed_tcp_recv([user_check]void* raft_conn,
+        public void* ecall_conn_new([user_check] WOLFSSL_CTX* ctx,
+                                    [in, size=ip_sz]char* ip, int ip_sz,
+                                    int socket, int is_client, int protocol,
+                                    [in, size=id_sz]char* id, int id_sz);
+        public int ecall_push_tcp([user_check]void* tls_conn,
                                        [in, size=in_sz]const unsigned char* buf_recv, long in_sz);
-        public int ecall_pull_tcp_send([user_check]void* raft_conn,
+        public int ecall_pull_tcp([user_check]void* tls_conn,
                                        [out, size=out_sz]unsigned char* buf_send, long out_sz);
+        public int ecall_raft_setup(void);
+        public int ecall_raft_become_leader(void);
+        public int ecall_raft_periodic(void);
     };
 
     untrusted {

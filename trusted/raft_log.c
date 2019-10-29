@@ -19,6 +19,8 @@
 
 #define INITIAL_CAPACITY 10
 
+#include "logging.h"
+
 typedef struct
 {
     /* size of array */
@@ -156,7 +158,7 @@ int log_append_entry(log_t* me_, raft_entry_t* ety)
         void* ud = raft_get_udata(me->raft);
         e = me->cb->log_offer(me->raft, ud, &me->entries[me->back], idx);
         if (0 != e)
-            return e;
+          return e;
         raft_offer_log(me->raft, &me->entries[me->back], idx);
     }
 

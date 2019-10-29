@@ -13,14 +13,14 @@
 #include <stdio.h>
 #include <assert.h>
 
+#include "sgx_unsupported.h"
+
 /* for varags */
 #include <stdarg.h>
 
 #include "raft.h"
 #include "raft_log.h"
 #include "raft_private.h"
-
-#include "sgx_unsupported.h"
 
 #ifndef min
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -395,7 +395,7 @@ int raft_recv_appendentries(
     int e = 0;
 
     if (0 < ae->n_entries)
-        __log(me_, node, "recvd appendentries t:%d ci:%d lc:%d pli:%d plt:%d #%d",
+        __log(me_, node, "recvd appendentries, t:%d ci:%d lc:%d pli:%d plt:%d #%d",
               ae->term,
               raft_get_current_idx(me_),
               ae->leader_commit,
@@ -747,7 +747,6 @@ int raft_recv_entry(raft_server_t* me_,
     if (0 != e)
         return e;
 
-    __log(me_, NULL,  " after raft_append, num of voting: %d", raft_get_num_voting_nodes(me_));
     for (i = 0; i < me->num_nodes; i++)
     {
         raft_node_t* node = me->nodes[i];
@@ -807,9 +806,7 @@ int raft_append_entry(raft_server_t* me_, raft_entry_t* ety)
 
     if (raft_entry_is_voting_cfg_change(ety))
         me->voting_cfg_change_log_idx = raft_get_current_idx(me_);
-    __log(me_, NULL, "111 num: %d", raft_get_num_voting_nodes(me_));
     int e = log_append_entry(me->log, ety);
-    __log(me_, NULL, "22 num: %d", raft_get_num_voting_nodes(me_));
     return e;
 }
 
@@ -930,7 +927,8 @@ int raft_send_appendentries(raft_server_t* me_, raft_node_t* node)
         }
     }
 
-    __log(me_, node, "sending appendentries node: ci:%d comi:%d t:%d lc:%d pli:%d plt:%d",
+    __log(me_, node, "sending appendentries, %s: ci:%d comi:%d t:%d lc:%d pli:%d plt:%d",
+          ae.n_entries==0 ? "heartbeat": "not heartbeat",
           raft_get_current_idx(me_),
           raft_get_commit_idx(me_),
           ae.term,

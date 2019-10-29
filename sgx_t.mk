@@ -68,8 +68,12 @@ Wolfssl_Include_Paths := -I$(WOLFSSL_ROOT)/ \
 						 -I$(WOLFSSL_ROOT)/wolfcrypt/
 
 
-Wolfssl_Enclave_C_Files := trusted/Wolfssl_Enclave.c trusted/http_parser.c trusted/raft/raft_node.c trusted/raft/raft_server.c trusted/raft/raft_log.c trusted/raft/raft_server_properties.c
+Wolfssl_Enclave_C_Files := trusted/Wolfssl_Enclave.c trusted/http_parser.c trusted/raft_node.c trusted/raft_server.c trusted/raft_log.c trusted/raft_server_properties.c
+Wolfssl_Enclave_C_Files += trusted/raftee.c
+Wolfssl_Enclave_C_Files += trusted/sgx_unsupported.c
+Wolfssl_Enclave_C_Files += trusted/https_server.c
 Wolfssl_Enclave_C_Files += trusted/tpl/tpl.c
+Wolfssl_Enclave_C_Files += trusted/hashmap.c
 Wolfssl_Enclave_Include_Paths := -IInclude -Itrusted $(Wolfssl_Include_Paths)\
 								   -I$(SGX_SDK)/include -I$(SGX_SDK)/include/tlibc\
 								   -I$(SGX_SDK)/include/stlport

@@ -74,17 +74,12 @@ coroutine void conn_recv(sgx_enclave_id_t eid, tcp_conn_t* tcp_conn){
   void* tls_conn = tcp_conn->tls_conn;
   unsigned char* buf_recv = malloc(4096*sizeof(unsigned char));
   memset(buf_recv, '\0', 4096);
-  int len_tcp_to_recv = 5;
+  int len_tcp_to_recv = 1;
   int buf_recv_len = 0;
   Debug("id:%s, try to recv %d bytes\n", tcp_conn->id, len_tcp_to_recv);
   // recv tcp data, and feed to the associated enclave.
-  clock_t total_start = clock();
-  clock_t io_total = 0;
   while(1){
-    clock_t io_start = clock();
     ret =  brecv(s, buf_recv, len_tcp_to_recv, -1);
-    clock_t io_end = clock();
-    io_total += (io_end - io_start);
     if(ret < 0){
       Error("id:%s, brecv error: %d\n",tcp_conn->id, errno);
       break;
@@ -99,56 +94,16 @@ coroutine void conn_recv(sgx_enclave_id_t eid, tcp_conn_t* tcp_conn){
       Error("id:%s, ecall_push_tcp_of_raft failed\n", tcp_conn->id);
       break;
     }
-
-    // try send
-    int len_to_flush = 0;
-    unsigned char* buf_send = malloc(4096*sizeof(unsigned char));
-    memset(buf_send, '\0', 4096);
-    sgx_status = ecall_pull_tcp(eid, &len_to_flush, tls_conn, buf_send, 4096);
-    if(sgx_status !=0){
-      Error("ecall_pull_tcp_of_raft failed, errno:%d\n", sgx_status);
-      break;
-    }else if(len_to_flush > 0){
-      Debug("%s, len to send:%d\n", tcp_conn->id, len_to_flush);
-      //      Debug("to send:%s\n", buf_send);
-      ret = bsend(s, buf_send, len_to_flush, -1);
-      if(ret<0){
-        Error("%s, bsend %d bytes ret: %d %d\n", tcp_conn->id, len_to_flush, ret, errno);
-        break;
-      }else{
-        Debug("%s, send %d butes succeeded\n", tcp_conn->id, len_to_flush);
-      }
-    }
-
-    // end try send
-
-
     if(len_tcp_to_recv ==0){
       //to-do: clean up this tcp_conn and close
       tcp_conn->tcp_connected = 0;
       break;
     }
   }
-  clock_t total_end = clock();
-  clock_t total = total_end - total_start;
-  Error("io_total:%f\n", (double)io_total);
-  Error("total:%f\n", (double)total);
-  Error(" io / total = %f\n", (double)(io_total/total) );
-  Error("clocks_per_second: %ld\n", CLOCKS_PER_SEC);
   tcp_conn->tcp_connected = 0; //wanggang add.
   free(buf_recv);  //wanggang add.
   Error("id %s exit\n", tcp_conn->id);
-
-  /** merge send */
-  int rc = tcp_close(s, -1);
-  if(rc != 0) {
-    Error("tcp close failed! errno:%d\n", errno);
-  }else{
-    Error("id:%s, tcp close succeeded\n", tcp_conn->id);
-  }
-  /** merge send */
 }
-
 
 
 coroutine void conn_send(sgx_enclave_id_t eid, tcp_conn_t* tcp_conn){
@@ -187,11 +142,11 @@ coroutine void conn_send(sgx_enclave_id_t eid, tcp_conn_t* tcp_conn){
       }
       break;
     }
-    int rc = msleep(now() + 1);
-    if(rc != 0) {
-      Error("cannot sleep!");
-    }
-    //    yield();
+    /* int rc = msleep(now() + 1); */
+    /* if(rc != 0) { */
+    /*   Error("cannot sleep!"); */
+    /* } */
+    yield();
   }
   Error("connection %s exit\n", tcp_conn->id);
   free(tcp_conn);
@@ -299,7 +254,7 @@ coroutine void start_https_server(sgx_enclave_id_t eid, WOLFSSL_CTX* ctx, char* 
       Error("tcp_accept failed, errno: %d", errno);
     }
     counter++;
-
+    
     tcp_conn_t* tcp_conn = malloc(sizeof(tcp_conn_t));
     tcp_conn->tcp_connected =1;
     tcp_conn->socket = s;
@@ -315,11 +270,10 @@ coroutine void start_https_server(sgx_enclave_id_t eid, WOLFSSL_CTX* ctx, char* 
 
     rc = conn_new(eid, ctx, tcp_conn, Https_protocol);
     assert(rc >= 0);
-    //    rc = go(conn_recv(eid, tcp_conn));
-    //    assert(rc>=0);
-    conn_recv(eid,tcp_conn);
-    //    rc = go(conn_send(eid, tcp_conn));
-    //    assert(rc>=0);
+    rc = go(conn_recv(eid, tcp_conn));
+    assert(rc>=0);
+    rc = go(conn_send(eid, tcp_conn));
+    assert(rc>=0);
   }
 }
 

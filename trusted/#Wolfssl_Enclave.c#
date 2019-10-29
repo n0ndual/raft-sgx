@@ -39,8 +39,8 @@ extern server_t* sv;
 WOLFSSL_CTX* server_ctx;
 WOLFSSL_CTX* client_ctx;
 
-char* cached_verify_buffer = NULL;
-long sz_cached_verify_buffer = 0;
+char* cached_verify_buffer;
+long sz_cached_verify_buffer;
 static sgx_thread_mutex_t global_lock = SGX_THREAD_MUTEX_INITIALIZER;
 
 time_t XTIME(time_t* timer){
@@ -179,8 +179,6 @@ int enc_cache_verify_buffer(const unsigned char* in,
 {
   //  Debug_enclave("verify buffer size:%ld\n", sz);
   sz_cached_verify_buffer = sz;
-//  if (cached_verify_buffer != NULL)  //wanggang add
-//     free(cached_verfiy_buffer); 
   cached_verify_buffer = (unsigned char*)malloc(sizeof(unsigned char) * sz);
   memcpy(cached_verify_buffer, in, sz);
   return 0;
@@ -194,9 +192,10 @@ int LowResTimer(void) /* low_res timer */
 }
 
 int NBSend(WOLFSSL* ssl, char* buf, int sz, void* ctx){
-  Error_enclave("NBSend: %d\n",sz);
+  Debug_enclave("NBSend: %d\n",sz);
   tls_connection_t* tls_conn = (tls_connection_t*)ctx;
   if(tls_conn->len_buf_tcp_send > 0){
+    // insecure
     memcpy(tls_conn->buf_tcp_send + tls_conn->len_buf_tcp_send, buf, sz);
     tls_conn->len_buf_tcp_send = tls_conn->len_buf_tcp_send + sz;
     return sz;
@@ -208,21 +207,21 @@ int NBSend(WOLFSSL* ssl, char* buf, int sz, void* ctx){
 }
 
 int NBRecv(WOLFSSL* ssl, char* buf, int sz, void* ctx){
-  Error_enclave("NBRecv want to read %d bytes\n", sz);
+  Debug_enclave("NBRecv want to read %d bytes\n", sz);
   tls_connection_t* tls_conn = (tls_connection_t*)ctx;
   if(tls_conn->len_buf_tcp_recv > 0 ){
     if(tls_conn->len_buf_tcp_recv <= sz){
-      Error_enclave("NBRecv read %d byte\n", tls_conn->len_buf_tcp_recv);
+      Debug_enclave("NBRecv read %d byte\n", tls_conn->len_buf_tcp_recv);
       memcpy(buf, tls_conn->buf_tcp_recv, tls_conn->len_buf_tcp_recv);
       int done = tls_conn->len_buf_tcp_recv;
-      tls_conn->len_tcp_to_recv = sz - tls_conn->len_buf_tcp_recv;
       tls_conn->len_buf_tcp_recv =0;
+      tls_conn->len_tcp_to_recv = sz - tls_conn->len_buf_tcp_recv;
       return done;
     }else{
       Error_enclave("fatal error\n\n");
     }
   }else{
-    Error_enclave("recv buf 0 bytes, want read: %d bytes\n", sz);
+    Debug_enclave("recv buf 0 bytes, want read: %d bytes\n", sz);
     tls_conn->len_tcp_to_recv = sz;
     return WOLFSSL_CBIO_ERR_WANT_READ;
   }
@@ -283,11 +282,10 @@ int tls_send(tls_connection_t* tls_conn, char* msg, int len_msg){
 
 int flush_buf_tls_send(tls_connection_t* tls_conn){
   WOLFSSL* ssl = tls_conn->ssl;
-  if(tls_conn->len_buf_tls_send > 0){
-    Error_enclave("before wolfssl_write, len_buf_tls_send:%d\n", tls_conn->len_buf_tls_send);
+  if(tls_conn->len_buf_tls_send>0){
     int ret = wolfSSL_write(tls_conn->ssl, tls_conn->buf_tls_send, tls_conn->len_buf_tls_send);
     if(ret == tls_conn->len_buf_tls_send){
-      Error_enclave("wolfssl flush all the bytes:%d\n", tls_conn->len_buf_tls_send);
+      Debug_enclave("wolfssl flush all the bytes:%d\n", tls_conn->len_buf_tls_send);
       memset(tls_conn->buf_tls_send, '\0', 4096);
       tls_conn->len_buf_tls_send = 0;
     }else{
@@ -308,13 +306,13 @@ int ecall_push_tcp(void* void_tls_conn, const unsigned char* buf_recv, long len_
   int ret = wolfSSL_read(tls_conn->ssl, buf_recv_tls, sizeof(buf_recv_tls));
   Debug_enclave("wolfssl_read ret: %d\n", ret);
   if(ret == -1){
-    Warn_enclave("wolfSSL_read error = %d\n", wolfSSL_get_error(tls_conn->ssl, ret));
+    Error_enclave("wolfSSL_read error = %d\n", wolfSSL_get_error(tls_conn->ssl, ret));
   }
   if(ret >= 0){
      if(tls_conn->upper_layer_protocol == Raft_protocol){
        //       Debug_enclave("%s, read from raft_peer %d bytes, protocol: %d\n",
        //                     tls_conn->id, tls_conn->socket, Raft_protocol);
-      tls_conn->len_tcp_to_recv=1;
+      tls_conn->len_tcp_to_recv=5;
       if(strcmp(buf_recv_tls, "I will speak to your warchief")==0){
         Debug_enclave("%s, receive test handshake\n", tls_conn->id);
         int ret = tls_send(tls_conn, "I speak for the horde", strlen("I speak for the horde")+1);
@@ -338,12 +336,12 @@ int ecall_push_tcp(void* void_tls_conn, const unsigned char* buf_recv, long len_
     }else{
       Debug_enclave("read https request, bytes:%d, content:%s, protocol: %d\n", ret, buf_recv_tls, Https_protocol);
       Debug_enclave("peer ip: %s\n", tls_conn->ip);
-      tls_conn->len_tcp_to_recv=1;
+      tls_conn->len_tcp_to_recv=5;
 
       ret = parse_https(buf_recv_tls, ret, tls_conn->upper_layer);
       Debug_enclave("parse_https ret: %d\n", ret);
       if(ret == -1){
-        tls_conn->len_tcp_to_recv = 1;
+        tls_conn->len_tcp_to_recv = 5;
       }else{
         tls_conn->len_tcp_to_recv = 0;
         //free(tls_conn);
@@ -357,7 +355,7 @@ int ecall_pull_tcp(void* void_tls_conn,
                         unsigned char* buf_send, long out_sz){
   tls_connection_t* tls_conn = (tls_connection_t*)void_tls_conn;
   flush_buf_tls_send(tls_conn);
-  Error_enclave("%s, pull data:%d\n", tls_conn->id, tls_conn->len_buf_tcp_send);
+  Debug_enclave("%s, pull data:%d\n", tls_conn->id, tls_conn->len_buf_tcp_send);
   memcpy(buf_send, tls_conn->buf_tcp_send, out_sz);
   int ret = tls_conn->len_buf_tcp_send;
   memset(tls_conn->buf_tcp_send, '\0', 4096);
@@ -387,7 +385,7 @@ void* ecall_conn_new(WOLFSSL_CTX* ctx, char* ip, int sz,
 
   WOLFSSL* ssl;
   if(is_client == 1){
-    Error_enclave("%s, peer is a client\n", tls_conn->id);
+    Warn_enclave("%s, peer is a client\n", tls_conn->id);
     if ((ssl = wolfSSL_new(server_ctx)) == NULL) {
       Error_enclave("ERROR: failed to create WOLFSSL object\n");
     }
@@ -397,7 +395,6 @@ void* ecall_conn_new(WOLFSSL_CTX* ctx, char* ip, int sz,
       Error_enclave("ERROR: failed to create WOLFSSL object\n");
     }
   }
-  Error_enclave("NewSSL succ\n ");
   tls_conn->ssl = ssl;
   wolfSSL_SetIOWriteCtx(ssl, tls_conn);
   wolfSSL_SetIOReadCtx(ssl, tls_conn);
@@ -431,7 +428,7 @@ void* ecall_conn_new(WOLFSSL_CTX* ctx, char* ip, int sz,
     https_client->settings = settings;
     https_client->parser = parser;
 
-    Error_enclave("%s, new https conn created\n", tls_conn->id);
+    Warn_enclave("%s, new https conn created\n", tls_conn->id);
   }else{
     raft_connection_t* raft_peer = (raft_connection_t*)malloc(sizeof(raft_connection_t));
     raft_peer->tls_conn = tls_conn;
